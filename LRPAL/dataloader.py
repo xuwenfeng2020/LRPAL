@@ -10,7 +10,7 @@ cfg = get_config()
 
 
 def custom_collate(batch):
-    """自定义批处理函数，处理图数据和图像数据"""
+
     graph_datas = [item for item in batch]
     images = [item.image for item in batch]
     pyg_batch = Batch.from_data_list(graph_datas)
@@ -19,7 +19,7 @@ def custom_collate(batch):
 
 
 class AnomalyDataset(Dataset):
-    """异常检测数据集类，处理图数据和图像数据"""
+
 
     def __init__(self, data_dir, img_size=(300, 300)):
         super().__init__()
@@ -27,7 +27,7 @@ class AnomalyDataset(Dataset):
         self.img_size = img_size
         self.resize = transforms.Resize(img_size)
 
-        # 获取所有数据文件
+
         self.files = sorted([
             f for f in os.listdir(data_dir)
             if f.endswith(".pt") or f.endswith(".pth")
@@ -44,12 +44,12 @@ class AnomalyDataset(Dataset):
         path = os.path.join(self.data_dir, self.files[idx])
         data = torch.load(path, map_location="cpu")
 
-        # 图数据处理
+
         x = data.x.float()
         edge_index = data.edge_index.long()
         y = torch.tensor(int(data.y)).long()
 
-        # edge_index修正
+
         num_nodes = x.shape[0]
         if edge_index.numel() > 0:
             max_idx = edge_index.max().item()
@@ -58,7 +58,7 @@ class AnomalyDataset(Dataset):
             if edge_index.max().item() >= num_nodes or edge_index.min().item() < 0:
                 raise ValueError(f"样本 {self.files[idx]} 的edge_index无效")
 
-        # 图像数据处理（统一为3通道）
+
         img = data.image.float()
         if img.ndim == 2:
             img = img.unsqueeze(0)
@@ -67,7 +67,7 @@ class AnomalyDataset(Dataset):
         else:
             raise ValueError(f"样本 {self.files[idx]} 图像维度异常（{img.ndim}D）")
 
-        # 192通道转3通道，其他必须为3通道
+  
         if img.shape[0] == 192:
             img = img.view(3, 64, img.shape[1], img.shape[2]).mean(dim=1)
         elif img.shape[0] != 3:
@@ -78,7 +78,7 @@ class AnomalyDataset(Dataset):
         return Data(x=x, edge_index=edge_index, y=y, image=img)
 
     def get_labels(self):
-        """获取所有样本的标签"""
+      
         labels = []
         for i in range(len(self.files)):
             path = os.path.join(self.data_dir, self.files[i])
@@ -88,63 +88,60 @@ class AnomalyDataset(Dataset):
 
 
 def get_full_dataset(data_dir, img_size=(300, 300)):
-    """获取完整数据集（不进行划分）"""
+
     return AnomalyDataset(data_dir, img_size)
 
 
 def get_dataset_labels(dataset):
-    """获取数据集的标签"""
+
     if hasattr(dataset, 'get_labels'):
         return dataset.get_labels()
     else:
-        # 从Subset中获取标签
+
         if isinstance(dataset, Subset):
             full_dataset = dataset.dataset
             indices = dataset.indices
             if hasattr(full_dataset, 'get_labels'):
                 return full_dataset.get_labels()[indices]
             else:
-                # 逐个加载获取标签
+   
                 labels = []
                 for i in indices:
                     data = full_dataset[i]
                     if hasattr(data, 'y'):
                         labels.append(data.y.item())
                     else:
-                        # 如果是元组，假设第一个元素是图数据
+        
                         labels.append(data[0].y.item())
                 return np.array(labels)
         else:
-            # 直接获取
+       
             labels = []
             for i in range(len(dataset)):
                 data = dataset[i]
                 if hasattr(data, 'y'):
                     labels.append(data.y.item())
                 else:
-                    # 如果是元组，假设第一个元素是图数据
+                  
                     labels.append(data[0].y.item())
             return np.array(labels)
 
 
 def build_datasets(data_dir, val_ratio=0.2, init_label_ratio=0.1):
-    """
-    构建数据集（用于非交叉验证实验）
-    返回：有标签数据集，无标签数据集，验证集
-    """
+
     dataset = AnomalyDataset(data_dir)
     total_len = len(dataset)
     val_len = int(total_len * val_ratio)
     train_len = total_len - val_len
     train_dataset, val_dataset = random_split(dataset, [train_len, val_len])
 
-    # 获取训练集的标签用于分层采样
+
     train_labels = get_dataset_labels(train_dataset)
 
-    # 使用随机索引（可根据需要改为分层采样）
+
     init_label_len = max(1, int(train_len * init_label_ratio))
 
-    # 使用分层采样
+
     from sklearn.model_selection import train_test_split
     indices = list(range(train_len))
     labeled_idx, unlabeled_idx = train_test_split(
@@ -165,19 +162,7 @@ def build_datasets(data_dir, val_ratio=0.2, init_label_ratio=0.1):
 
 
 def create_kfold_splits(full_dataset, k_folds=5, val_ratio=0.2, seed=42):
-    """
-    创建K折交叉验证划分
 
-    Args:
-        full_dataset: 完整数据集
-        k_folds: 折数
-        val_ratio: 验证集比例（从训练集中划分）
-        seed: 随机种子
-
-    Returns:
-        splits: 列表，每个元素为(train_indices, val_indices, test_indices)
-    """
-    # 获取标签
     all_labels = get_dataset_labels(full_dataset)
     n_samples = len(full_dataset)
 
@@ -188,11 +173,10 @@ def create_kfold_splits(full_dataset, k_folds=5, val_ratio=0.2, seed=42):
     splits = []
 
     for train_val_idx, test_idx in skf.split(range(n_samples), all_labels):
-        # 获取训练验证集的标签
+
         train_val_labels = all_labels[train_val_idx]
 
-        # 将训练验证集进一步划分为训练集和验证集
-        # 使用train_test_split进行分层采样
+      
         from sklearn.model_selection import train_test_split
         train_idx, val_idx = train_test_split(
             train_val_idx,
@@ -201,7 +185,7 @@ def create_kfold_splits(full_dataset, k_folds=5, val_ratio=0.2, seed=42):
             random_state=seed
         )
 
-        # 转换为列表
+
         if isinstance(train_idx, np.ndarray):
             train_idx = train_idx.tolist()
         if isinstance(val_idx, np.ndarray):
@@ -219,18 +203,7 @@ def create_kfold_splits(full_dataset, k_folds=5, val_ratio=0.2, seed=42):
 
 
 def create_active_learning_splits(train_dataset, init_label_ratio=0.05, seed=42):
-    """
-    在训练集上创建主动学习的初始划分
-
-    Args:
-        train_dataset: 训练集（Subset或完整数据集）
-        init_label_ratio: 初始有标签比例
-        seed: 随机种子
-
-    Returns:
-        Dl: 有标签数据集（Subset）
-        Du: 无标签数据集（Subset）
-    """
+  
     if isinstance(train_dataset, Subset):
         indices = train_dataset.indices
         if isinstance(indices, np.ndarray):
@@ -240,10 +213,10 @@ def create_active_learning_splits(train_dataset, init_label_ratio=0.05, seed=42)
         indices = list(range(len(train_dataset)))
         full_dataset = train_dataset
 
-    # 获取标签用于分层采样
+
     labels = get_dataset_labels(train_dataset)
 
-    # 使用分层采样划分有标签和无标签
+
     from sklearn.model_selection import train_test_split
     labeled_idx, unlabeled_idx = train_test_split(
         indices,
@@ -252,7 +225,7 @@ def create_active_learning_splits(train_dataset, init_label_ratio=0.05, seed=42)
         random_state=seed
     )
 
-    # 确保返回的是列表
+
     if isinstance(labeled_idx, np.ndarray):
         labeled_idx = labeled_idx.tolist()
     if isinstance(unlabeled_idx, np.ndarray):
@@ -269,14 +242,7 @@ def create_active_learning_splits(train_dataset, init_label_ratio=0.05, seed=42)
 
 
 def get_dataloader(dataset, shuffle=True, batch_size=None):
-    """
-    获取数据加载器
-
-    Args:
-        dataset: 数据集
-        shuffle: 是否打乱
-        batch_size: 批大小，如果为None则使用config中的设置
-    """
+  
     if batch_size is None:
         batch_size = cfg.BATCH_SIZE
 
@@ -291,35 +257,21 @@ def get_dataloader(dataset, shuffle=True, batch_size=None):
 
 
 def update_datasets(Dl, Du, selected_indices):
-    """
-    更新数据集：将选中的样本从无标签集移动到有标签集
 
-    Args:
-        Dl: 有标签数据集（Subset）
-        Du: 无标签数据集（Subset）
-        selected_indices: 选中的样本在Du中的索引列表
+    assert Dl.dataset is Du.dataset, 
 
-    Returns:
-        Dl_updated: 更新后的有标签数据集
-        Du_updated: 更新后的无标签数据集
-    """
-    # 确保Dl和Du是基于同一个完整数据集
-    assert Dl.dataset is Du.dataset, "Dl和Du必须基于同一个完整数据集"
 
-    # 将indices转换为列表（如果它们是numpy数组）
     dl_indices = list(Dl.indices) if hasattr(Dl.indices, '__iter__') else [Dl.indices]
     du_indices = list(Du.indices) if hasattr(Du.indices, '__iter__') else [Du.indices]
 
-    # 获取选中的全局索引
     if isinstance(selected_indices, np.ndarray):
         selected_indices = selected_indices.tolist()
 
     selected_global = [du_indices[i] for i in selected_indices]
 
-    # 更新有标签集
+
     dl_updated_indices = dl_indices + selected_global
 
-    # 更新无标签集
     du_updated_indices = [i for i in du_indices if i not in selected_global]
 
     Dl_updated = Subset(Dl.dataset, dl_updated_indices)
@@ -329,19 +281,7 @@ def update_datasets(Dl, Du, selected_indices):
 
 
 def create_dataloaders(Dl, Du=None, Val=None, Test=None, batch_size=None):
-    """
-    创建所有数据加载器
 
-    Args:
-        Dl: 有标签训练集
-        Du: 无标签训练集（可选）
-        Val: 验证集（可选）
-        Test: 测试集（可选）
-        batch_size: 批大小
-
-    Returns:
-        dataloaders: 字典，包含所有数据加载器
-    """
     dataloaders = {}
 
     dataloaders['labeled'] = get_dataloader(Dl, shuffle=True, batch_size=batch_size)
@@ -355,7 +295,7 @@ def create_dataloaders(Dl, Du=None, Val=None, Test=None, batch_size=None):
     if Test is not None:
         dataloaders['test'] = get_dataloader(Test, shuffle=False, batch_size=batch_size)
 
-    # 打印信息
+
     print("创建数据加载器:")
     for key, loader in dataloaders.items():
         dataset_size = len(loader.dataset)
